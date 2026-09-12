@@ -15,10 +15,14 @@
 package main
 
 import (
+	"crypto"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/pem"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -776,6 +780,15 @@ func validate(username, email, password string) string {
 // session token = base64(accountID.expiryUnix).hmac — stateless, signed.
 var sessionSecret []byte
 
+// BAAS id_token signing (RS256). A real CFW Switch verifies the id_token Splatoon 2
+// presents against the JWKS served by baas-jwks; this key MUST match the public key
+// published in that JWKS set. In the emulator build, Ryujinx's ManagerServer minted the
+// id_token; for a real Switch with no Nintendo, nextendo-account mints it here instead.
+var (
+	baasKey    *rsa.PrivateKey
+	baasIssuer string
+)
+
 func loadSecret() {
 	if v := os.Getenv("NEXTENDO_SECRET"); v != "" {
 		sessionSecret = []byte(v)
@@ -792,6 +805,81 @@ func loadSecret() {
 	sessionSecret = make([]byte, 32)
 	_, _ = rand.Read(sessionSecret)
 	_ = os.WriteFile(path, []byte(hex.EncodeToString(sessionSecret)), 0o600)
+}
+
+// loadBaasKey loads the RSA private key used to sign BAAS id_tokens (must match the
+// public key published by baas-jwks). baasKey stays nil if unset/missing so the account
+// service still boots when BAAS id_token minting isn't required (e.g. the emulator build
+// where Ryujinx mints it). For a real CFW Switch with no Nintendo, this is what lets
+// Splatoon 2 verify the id_token locally against our JWKS.
+func loadBaasKey() {
+	path := os.Getenv("BAAS_SIGNING_KEY")
+	if path == "" {
+		path = "localcerts/baas_signing_key.pem"
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("[baas] signing key non chargée (%s): %v — id_token BAAS non minté", path, err)
+		return
+	}
+	block, _ := pem.Decode(b)
+	if block == nil {
+		log.Printf("[baas] clé BAAS invalide (pas de PEM): %s", path)
+		return
+	}
+	if k, e := x509.ParsePKCS8PrivateKey(block.Bytes); e == nil {
+		if rk, ok := k.(*rsa.PrivateKey); ok {
+			baasKey = rk
+		}
+	}
+	if baasKey == nil {
+		if rk, e := x509.ParsePKCS1PrivateKey(block.Bytes); e == nil {
+			baasKey = rk
+		}
+	}
+	if baasKey == nil {
+		log.Printf("[baas] clé BAAS illisible: %s", path)
+		return
+	}
+	baasIssuer = os.Getenv("BAAS_ISSUER")
+	if baasIssuer == "" {
+		baasIssuer = "https://e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com"
+	}
+	log.Printf("[baas] id_token BAAS signé (kid=nextendo-baas-key-1, iss=%s)", baasIssuer)
+}
+
+func b64url(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+
+func b64urlJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return b64url(b)
+}
+
+// signBaasIdToken mints an RS256 BAAS id_token (header.kid=nextendo-baas-key-1) bound to
+// the account's synthetic baasUserID. Splatoon 2 fetches the matching JWKS (jku) and
+// verifies the signature, so a real CFW Switch can complete account-link without Nintendo.
+func signBaasIdToken(baasID string) (string, error) {
+	if baasKey == nil {
+		return "", errors.New("baas signing key not loaded")
+	}
+	header := b64urlJSON(map[string]any{"alg": "RS256", "kid": "nextendo-baas-key-1", "typ": "id_token"})
+	now := time.Now().Unix()
+	claims := map[string]any{
+		"iss": baasIssuer,
+		"sub": baasID,
+		"aud": baasIssuer,
+		"jku": baasIssuer + "/1.0.0/certificates",
+		"iat": now,
+		"exp": now + 10*365*24*3600,
+	}
+	payload := b64urlJSON(claims)
+	signing := []byte(header + "." + payload)
+	sum := sha256.Sum256(signing)
+	sig, err := rsa.SignPKCS1v15(rand.Reader, baasKey, crypto.SHA256, sum[:])
+	if err != nil {
+		return "", err
+	}
+	return header + "." + payload + "." + b64url(sig), nil
 }
 
 // setTokenCookie stores the web session token as an HttpOnly, Secure, SameSite=Strict
@@ -2741,6 +2829,10 @@ func (s *server) internalIdentity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	acct.ensureNintendoIDs() // deterministic; fills in-memory for pre-existing accounts
+	tok, terr := signBaasIdToken(acct.BaasID)
+	if terr != nil {
+		log.Printf("[identity] id_token BAAS non minté: %v", terr)
+	}
 	nickname := displayName(acct)
 	// pseudo affiché = Profile.Name (pseudo synchronisé depuis la console) sinon Username.
 	// avatar = image uploadée OU icône de galerie choisie (résolue depuis avatarsDir).
@@ -2759,6 +2851,7 @@ func (s *server) internalIdentity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pid": acct.PID, "naID": acct.NaID, "baasUserID": acct.BaasID, "bsDid": acct.BsDid,
 		"nickname": nickname, "friendCode": acct.FriendCode, "avatar": avatar, "mii": mii,
+		"id_token": tok,
 		"imageUpdatedAt": imageUpdatedAt,
 		"playLog":        historyToPlayLog(acct.PID),
 		"friends":        s.friendList(acct.Friends), "friendRequests": s.friendList(acct.FriendRequests),
@@ -2814,6 +2907,10 @@ func (s *server) internalLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	acct.ensureNintendoIDs()
+	tok, terr := signBaasIdToken(acct.BaasID)
+	if terr != nil {
+		log.Printf("[login] id_token BAAS non minté: %v", terr)
+	}
 	nickname := displayName(acct)
 	// pseudo affiché = Profile.Name (synchronisé depuis la console) sinon Username.
 	// avatar = image uploadée OU icône de galerie choisie (résolue depuis avatarsDir).
@@ -2832,6 +2929,7 @@ func (s *server) internalLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pid": acct.PID, "naID": acct.NaID, "baasUserID": acct.BaasID, "bsDid": acct.BsDid,
 		"nickname": nickname, "friendCode": acct.FriendCode, "avatar": avatar, "mii": mii,
+		"id_token": tok,
 		"imageUpdatedAt": imageUpdatedAt,
 		"playLog":        historyToPlayLog(acct.PID),
 		"friends":        s.friendList(acct.Friends), "friendRequests": s.friendList(acct.FriendRequests),
@@ -2873,6 +2971,7 @@ func loadEnvFile() {
 func main() {
 	loadEnvFile()
 	loadSecret()
+	loadBaasKey()
 
 	// CA de secours pour les appels HTTPS sortants (siteverify Turnstile). Le conteneur
 	// Debian-slim n'embarque pas le paquet ca-certificates → « certificate signed by
