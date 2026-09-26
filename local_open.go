@@ -29,6 +29,9 @@ var localOpen = os.Getenv("NEXTENDO_LOCAL_OPEN") == "1"
 // anything that can reach this service, and each unknown id would add a row.
 const localOpenMaxAccounts = 256
 
+// localOpenPIDSpan bounds the PIDs EnsurePID will create: firstNexPID up to this many above it.
+const localOpenPIDSpan uint64 = 100_000_000
+
 // EnsureBaasNSA returns the account owning nsa, creating it if none does.
 func (s *jsonStore) EnsureBaasNSA(nsa uint64) (*Account, error) {
 	s.mu.Lock()
@@ -67,6 +70,52 @@ func (s *jsonStore) EnsureBaasNSA(nsa uint64) (*Account, error) {
 	s.byCode[a.FriendCode] = a.ID
 	s.NextID++
 	s.NextP++
+	s.befriendAllLocked()
+	if err := s.persist(); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// EnsurePID returns the account with this PID, creating it if there is none. Local open mode
+// only: the PID of a player whose real account lives on another deployment (Citron sends it on
+// its own) reaches /internal/online-check directly, without ever asking /api/nsa, so nothing
+// else would create the account and the online gate would refuse it as "unknown".
+// Only PIDs in the Nextendo range are accepted, and the same account limit applies.
+func (s *jsonStore) EnsurePID(pid uint64) (*Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if id, ok := s.byPID[pid]; ok {
+		return s.Accts[id], nil
+	}
+	if pid < firstNexPID || pid >= firstNexPID+localOpenPIDSpan {
+		return nil, fmt.Errorf("pid %d is outside the Nextendo range", pid)
+	}
+	if len(s.Accts) >= localOpenMaxAccounts {
+		return nil, fmt.Errorf("local open mode: account limit (%d) reached", localOpenMaxAccounts)
+	}
+
+	a := &Account{
+		ID:            s.NextID,
+		Username:      fmt.Sprintf("player-%04d", pid%10000),
+		Email:         fmt.Sprintf("pid-%d@local.invalid", pid),
+		PasswordHash:  "!", // no web login for an account made this way
+		PID:           pid,
+		FriendCode:    genFriendCode(),
+		CreatedAt:     time.Now().UTC(),
+		EmailVerified: true,
+	}
+	a.ensureNintendoIDs()
+	s.Accts[a.ID] = a
+	s.byUser[strings.ToLower(a.Username)] = a.ID
+	s.byMail[strings.ToLower(a.Email)] = a.ID
+	s.byPID[a.PID] = a.ID
+	s.byCode[a.FriendCode] = a.ID
+	s.NextID++
+	if pid >= s.NextP {
+		s.NextP = pid + 1 // never hand this PID out again
+	}
 	s.befriendAllLocked()
 	if err := s.persist(); err != nil {
 		return nil, err

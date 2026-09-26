@@ -82,3 +82,59 @@ func TestEnsureBaasNSAHonoursAccountLimit(t *testing.T) {
 		t.Fatalf("existing id must keep resolving at the limit: %v", err)
 	}
 }
+
+func TestEnsurePIDCreatesOnceAndKeepsCounterAhead(t *testing.T) {
+	s := newTestOpenStore(t)
+	other, _ := s.EnsureBaasNSA(7)
+
+	a, err := s.EnsurePID(1800029871)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.PID != 1800029871 || !a.EmailVerified {
+		t.Fatalf("unexpected account: %+v", a)
+	}
+	again, err := s.EnsurePID(1800029871)
+	if err != nil || again.ID != a.ID {
+		t.Fatalf("the same PID must return the same account: %v %v", again, err)
+	}
+	if got, err := s.ByPID(1800029871); err != nil || got.ID != a.ID {
+		t.Fatalf("ByPID must find it: %v %v", got, err)
+	}
+	// never handed out again by the counter
+	next, _ := s.EnsureBaasNSA(8)
+	if next.PID <= 1800029871 {
+		t.Fatalf("counter must move past the created PID, got %d", next.PID)
+	}
+	// friends with everyone
+	other, _ = s.ByPID(other.PID)
+	if !containsPID(other.Friends, a.PID) || !containsPID(a.Friends, other.PID) {
+		t.Fatalf("expected mutual friends: other=%v a=%v", other.Friends, a.Friends)
+	}
+}
+
+func TestEnsurePIDRefusesOutOfRangeAndOverLimit(t *testing.T) {
+	s := newTestOpenStore(t)
+	for _, bad := range []uint64{0, 1, firstNexPID - 1, firstNexPID + localOpenPIDSpan} {
+		if _, err := s.EnsurePID(bad); err == nil {
+			t.Fatalf("pid %d is outside the Nextendo range and must be refused", bad)
+		}
+	}
+	for i := 1; i <= localOpenMaxAccounts; i++ {
+		if _, err := s.EnsureBaasNSA(uint64(i)); err != nil {
+			t.Fatalf("account %d: %v", i, err)
+		}
+	}
+	if _, err := s.EnsurePID(firstNexPID + 50_000_000); err == nil {
+		t.Fatal("the account limit must apply to EnsurePID too")
+	}
+}
+
+func containsPID(list []uint64, pid uint64) bool {
+	for _, p := range list {
+		if p == pid {
+			return true
+		}
+	}
+	return false
+}

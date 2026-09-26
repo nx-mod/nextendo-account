@@ -1508,6 +1508,15 @@ func (s *server) onlineCheck(w http.ResponseWriter, r *http.Request) {
 	if in.Kind == "" {
 		in.Kind = "ryujinx"
 	}
+	if localOpen { // NEXTENDO_LOCAL_OPEN=1: see local_open.go
+		if res, ok := s.store.(interface {
+			EnsurePID(uint64) (*Account, error)
+		}); ok {
+			if _, err := res.EnsurePID(in.PID); err != nil {
+				log.Printf("[local-open] pid %d: %v", in.PID, err)
+			}
+		}
+	}
 	reason, allow := s.evalOnlineGatesWithSelf(in.PID, in.Kind, in.IP)
 	if !allow {
 		log.Printf("[online-check] pid=%d REFUSÉ (%s)", in.PID, reason)
