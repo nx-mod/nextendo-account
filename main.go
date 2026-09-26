@@ -269,6 +269,11 @@ func newJSONStore(path string) (*jsonStore, error) {
 			s.NextP = firstNexPID + 1
 		}
 	}
+	if localOpen && s.befriendAllLocked() {
+		if err := s.persist(); err != nil {
+			return nil, err
+		}
+	}
 	return s, nil
 }
 
@@ -309,6 +314,9 @@ func (s *jsonStore) Create(username, email, passwordHash string) (*Account, erro
 	s.byCode[a.FriendCode] = a.ID
 	s.NextID++
 	s.NextP++
+	if localOpen {
+		s.befriendAllLocked()
+	}
 	if err := s.persist(); err != nil {
 		return nil, err
 	}
@@ -1891,6 +1899,18 @@ func (s *server) nsa(w http.ResponseWriter, r *http.Request) {
 		if a, err := res.ByBaasNSA(target); err == nil {
 			writeJSON(w, http.StatusOK, map[string]any{"pid": a.PID, "name": displayName(a)})
 			return
+		}
+	}
+	if localOpen { // NEXTENDO_LOCAL_OPEN=1: see local_open.go
+		if res, ok := s.store.(interface {
+			EnsureBaasNSA(uint64) (*Account, error)
+		}); ok {
+			if a, err := res.EnsureBaasNSA(target); err == nil {
+				writeJSON(w, http.StatusOK, map[string]any{"pid": a.PID, "name": displayName(a)})
+				return
+			} else {
+				log.Printf("[local-open] nsa %d: %v", target, err)
+			}
 		}
 	}
 	http.NotFound(w, r)
