@@ -16,7 +16,9 @@ package main
 // registration and removes friend consent.
 
 import (
+	"errors"
 	"fmt"
+	"golang.org/x/crypto/bcrypt"
 	"os"
 	"sort"
 	"strings"
@@ -176,4 +178,41 @@ func equalPIDs(a, b []uint64) bool {
 		}
 	}
 	return true
+}
+
+// openUsername turns an e-mail into a display name for an account made by openLoginCreate:
+// the part before the @, reduced to letters, digits, "_" and "-", at most 16 characters.
+func openUsername(email string) string {
+	local := email
+	if i := strings.IndexByte(email, '@'); i >= 0 {
+		local = email[:i]
+	}
+	var b strings.Builder
+	for _, r := range local {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-' {
+			b.WriteRune(r)
+		}
+		if b.Len() == 16 {
+			break
+		}
+	}
+	if b.Len() < 3 {
+		return "player-" + b.String()
+	}
+	return b.String()
+}
+
+// openLoginCreate makes the account for an e-mail that has none yet, so in local open mode any
+// e-mail and password signs in: the first login creates the account with that password, and
+// later logins must present the same one. The caller only gets here for ErrNotFound; an
+// existing e-mail with a wrong password is still refused.
+func openLoginCreate(store Store, email, password string) (*Account, error) {
+	if password == "" {
+		return nil, errors.New("empty password")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+	return store.Create(openUsername(email), email, string(hash))
 }

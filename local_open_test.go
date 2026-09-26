@@ -3,6 +3,8 @@ package main
 import (
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func newTestOpenStore(t *testing.T) *jsonStore {
@@ -137,4 +139,74 @@ func containsPID(list []uint64, pid uint64) bool {
 		}
 	}
 	return false
+}
+
+func TestOpenUsername(t *testing.T) {
+	cases := map[string]string{
+		"john@example.com":                "john",
+		"John.Doe+tag@example.com":        "JohnDoetag",
+		"a@example.com":                   "player-a",
+		"@example.com":                    "player-",
+		"averyveryverylongusername@x.com": "averyveryverylon",
+		"_-_@x.com":                       "_-_",
+	}
+	for in, want := range cases {
+		if got := openUsername(in); got != want {
+			t.Errorf("openUsername(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestOpenLoginCreateMakesTheAccountAndKeepsThePassword(t *testing.T) {
+	// only ever reached in open mode, where Create marks new accounts e-mail verified
+	prev := localOpen
+	localOpen = true
+	defer func() { localOpen = prev }()
+
+	s := newTestOpenStore(t)
+	a, err := openLoginCreate(s, "new.player@example.com", "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Email != "new.player@example.com" || !a.EmailVerified {
+		t.Fatalf("unexpected account: %+v", a)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(a.PasswordHash), []byte("pw")) != nil {
+		t.Fatal("the account must keep the password it was created with")
+	}
+	if bcrypt.CompareHashAndPassword([]byte(a.PasswordHash), []byte("other")) == nil {
+		t.Fatal("a different password must not match")
+	}
+	if _, err := openLoginCreate(s, "x@example.com", ""); err == nil {
+		t.Fatal("an empty password must be refused")
+	}
+	if _, err := openLoginCreate(s, "new.player@example.com", "pw2"); err == nil {
+		t.Fatal("creating the same e-mail twice must fail, not overwrite the password")
+	}
+}
+
+func TestOpenModePasswordPolicy(t *testing.T) {
+	prev := localOpen
+	localOpen = true
+	defer func() { localOpen = prev }()
+
+	if msg := validatePassword("a"); msg != "" {
+		t.Fatalf("open mode must accept any non-empty password, got %q", msg)
+	}
+	if msg := validatePassword(""); msg == "" {
+		t.Fatal("an empty password is still refused")
+	}
+}
+
+func TestStrictPasswordPolicyStillAppliesWhenOpenModeIsOff(t *testing.T) {
+	prev := localOpen
+	localOpen = false
+	defer func() { localOpen = prev }()
+
+	if msg := validatePassword("a"); msg == "" {
+		t.Fatal("off by default: a one-character password must still be refused")
+	}
+	if msg := validatePassword("Correct-Horse-9!"); msg != "" {
+		t.Fatalf("a strong password must pass, got %q", msg)
+	}
 }

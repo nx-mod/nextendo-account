@@ -773,6 +773,12 @@ const pwSpecials = "!@#$%^&*()-_=+[]{};:'\",.<>/?\\|`~"
 // Used by register, reset and any other password entry so the rule is enforced
 // server-side (the front-end meter is UX, this is the guarantee).
 func validatePassword(password string) string {
+	if localOpen { // NEXTENDO_LOCAL_OPEN=1: any non-empty password on a private test stack
+		if password == "" {
+			return "Le mot de passe est vide."
+		}
+		return ""
+	}
 	if len([]rune(password)) < 8 {
 		return "Le mot de passe doit faire au moins 8 caractères."
 	}
@@ -1152,6 +1158,12 @@ func (s *server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	acct, err := s.store.ByLogin(login)
+	if err != nil && localOpen && errors.Is(err, ErrNotFound) { // NEXTENDO_LOCAL_OPEN=1: see local_open.go
+		acct, err = openLoginCreate(s.store, login, in.Password)
+		if err == nil {
+			log.Printf("[local-open] login created account for %s pid=%d", acct.Username, acct.PID)
+		}
+	}
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(acct.PasswordHash), []byte(in.Password)) != nil {
 		writeErr(w, http.StatusUnauthorized, "Identifiants incorrects.")
 		return
