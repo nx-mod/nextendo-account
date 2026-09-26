@@ -27,6 +27,7 @@ var titlesByAccessKey = map[string][]string{
 	"9587602b": {"01006a800016e000"},                                         // Super Smash Bros. Ultimate
 	"v43a10em": {"01006f8002326000"},                                         // Animal Crossing: New Horizons
 	"e915510f": {"01006fe013472000"},                                         // Mario Party Superstars
+	"fdf6617f": {"01009b90006dc000"},                                         // Super Mario Maker 2
 }
 
 const onlineCountsTTL = 5 * time.Second
