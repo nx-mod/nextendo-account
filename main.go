@@ -307,6 +307,9 @@ func (s *jsonStore) Create(username, email, passwordHash string) (*Account, erro
 		CreatedAt:    time.Now().UTC(),
 	}
 	a.ensureNintendoIDs() // synthetic Nintendo identity for real-Switch isolation
+	if localOpen {
+		a.EmailVerified = true // no mail server on a private stack: nobody could click the link
+	}
 	s.Accts[a.ID] = a
 	s.byUser[strings.ToLower(username)] = a.ID
 	s.byMail[strings.ToLower(email)] = a.ID
