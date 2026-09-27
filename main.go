@@ -2953,6 +2953,12 @@ func (s *server) internalLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	acct, err := s.store.ByLogin(strings.TrimSpace(in.Login))
+	if err != nil && localOpen && errors.Is(err, ErrNotFound) && reEmail.MatchString(strings.TrimSpace(in.Login)) { // NEXTENDO_LOCAL_OPEN=1: a new e-mail creates its account
+		acct, err = openLoginCreate(s.store, strings.TrimSpace(in.Login), in.Password)
+		if err == nil {
+			log.Printf("[local-open] console link created account for %s pid=%d", acct.Username, acct.PID)
+		}
+	}
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(acct.PasswordHash), []byte(in.Password)) != nil {
 		writeErr(w, http.StatusUnauthorized, "identifiants invalides")
 		return
