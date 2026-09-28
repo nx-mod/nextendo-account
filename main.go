@@ -22,9 +22,9 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/pem"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -60,7 +60,7 @@ type Account struct {
 	// Country picked by the player (ISO 3166-1 alpha-2). Drives the flag shown
 	// in game: the emulator only knows a REGION, never a country, so the account
 	// is the source of truth. Empty = unknown (accounts created before this).
-	Country       string    `json:"country,omitempty"`   // IP d'inscription — réservée si le compte est banni
+	Country string `json:"country,omitempty"` // IP d'inscription — réservée si le compte est banni
 
 	// Lien Discord poussé par le bot de vérif (voir discord.go). Le compte est la source de
 	// vérité : le gate online peut l'exiger, et un ban depuis le site sait qui bannir sur Discord.
@@ -198,27 +198,27 @@ type Store interface {
 	SetPassword(id int64, passwordHash string) error
 	SetEmailVerified(id int64, verified bool) error
 	SetEmail(id int64, email string) (*Account, error)
-	SetDisabled(id int64, disabled bool) error                            // gel de relance : ferme/rouvre un compte
-	SetRegIP(id int64, ip string) error                                   // ban : capture l'IP d'inscription (réservée au ban)
-	SetDiscordLink(id int64, discordID, username string) error            // lien Discord poussé par le bot (gate online + ban miroir)
-	SetBooster(id int64, isBooster bool) error                            // statut booster Discord poussé par le bot (cloud-save tous-jeux)
-	SetCloudGrace(id int64, until time.Time) error                        // downgrade booster : échéance de nettoyage cloud (zéro = efface)
-	AllWithCloudGrace() []*Account                                        // comptes avec une échéance de grâce cloud en attente (balayage)
-	LockdownExcept(keepPID uint64) (int, error)                           // ferme TOUS les comptes sauf keepPID (et le vérifie/rouvre)
-	EnableAll() (int, error)                                              // annule le gel : rouvre tous les comptes
-	AllAccounts() []*Account                                              // espace admin : liste tous les comptes
-	DeleteByPID(pid uint64) error                                         // espace admin : supprime un compte
+	SetDisabled(id int64, disabled bool) error                                 // gel de relance : ferme/rouvre un compte
+	SetRegIP(id int64, ip string) error                                        // ban : capture l'IP d'inscription (réservée au ban)
+	SetDiscordLink(id int64, discordID, username string) error                 // lien Discord poussé par le bot (gate online + ban miroir)
+	SetBooster(id int64, isBooster bool) error                                 // statut booster Discord poussé par le bot (cloud-save tous-jeux)
+	SetCloudGrace(id int64, until time.Time) error                             // downgrade booster : échéance de nettoyage cloud (zéro = efface)
+	AllWithCloudGrace() []*Account                                             // comptes avec une échéance de grâce cloud en attente (balayage)
+	LockdownExcept(keepPID uint64) (int, error)                                // ferme TOUS les comptes sauf keepPID (et le vérifie/rouvre)
+	EnableAll() (int, error)                                                   // annule le gel : rouvre tous les comptes
+	AllAccounts() []*Account                                                   // espace admin : liste tous les comptes
+	DeleteByPID(pid uint64) error                                              // espace admin : supprime un compte
 	SoftDeleteByPID(pid uint64, reason string) (*DeletedRecord, string, error) // suppression compte : cascade + trace
-	AllDeleted() []*DeletedRecord                                         // espace admin : trace des comptes supprimés
-	SendFriendRequest(id int64, targetPID uint64) (*Account, bool, error) // (target, alreadyFriends, err)
+	AllDeleted() []*DeletedRecord                                              // espace admin : trace des comptes supprimés
+	SendFriendRequest(id int64, targetPID uint64) (*Account, bool, error)      // (target, alreadyFriends, err)
 	AcceptFriendRequest(id int64, fromPID uint64) (*Account, error)
 	DeclineFriendRequest(id int64, fromPID uint64) error
 	RemoveFriend(id int64, friendPID uint64) error
 	SetFavorite(id int64, friendPID uint64, fav bool) error
 	BlockUser(id int64, targetPID uint64) error
 	UnblockUser(id int64, targetPID uint64) error
-	AddModFavorite(id int64, fav ModFavorite) error          // magasin de mods : favori GameBanana synchronisé au compte
-	RemoveModFavorite(id int64, modID int64) error           //   idem : retire un favori
+	AddModFavorite(id int64, fav ModFavorite) error                 // magasin de mods : favori GameBanana synchronisé au compte
+	RemoveModFavorite(id int64, modID int64) error                  //   idem : retire un favori
 	ListModFavorites(id int64, gameID int64) ([]ModFavorite, error) // idem : liste (gameID 0 = tous les jeux)
 }
 
@@ -226,10 +226,10 @@ type Store interface {
 // It is deliberately simple; the Postgres store (M2) implements the same
 // interface so nothing else changes.
 type jsonStore struct {
-	mu     sync.RWMutex
-	path   string
-	NextID int64              `json:"next_id"`
-	NextP  uint64             `json:"next_pid"`
+	mu      sync.RWMutex
+	path    string
+	NextID  int64              `json:"next_id"`
+	NextP   uint64             `json:"next_pid"`
 	Accts   map[int64]*Account `json:"accounts"`
 	Deleted []*DeletedRecord   `json:"deleted,omitempty"` // trace des comptes supprimés (espace admin)
 	byUser  map[string]int64   `json:"-"`
@@ -2902,7 +2902,7 @@ func (s *server) internalIdentity(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pid": acct.PID, "naID": acct.NaID, "baasUserID": acct.BaasID, "bsDid": acct.BsDid,
 		"nickname": nickname, "friendCode": acct.FriendCode, "avatar": avatar, "mii": mii,
-		"id_token": tok,
+		"id_token":       tok,
 		"imageUpdatedAt": imageUpdatedAt,
 		"playLog":        historyToPlayLog(acct.PID),
 		"friends":        s.friendList(acct.Friends), "friendRequests": s.friendList(acct.FriendRequests),
@@ -2986,7 +2986,7 @@ func (s *server) internalLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"pid": acct.PID, "naID": acct.NaID, "baasUserID": acct.BaasID, "bsDid": acct.BsDid,
 		"nickname": nickname, "friendCode": acct.FriendCode, "avatar": avatar, "mii": mii,
-		"id_token": tok,
+		"id_token":       tok,
 		"imageUpdatedAt": imageUpdatedAt,
 		"playLog":        historyToPlayLog(acct.PID),
 		"friends":        s.friendList(acct.Friends), "friendRequests": s.friendList(acct.FriendRequests),
@@ -3132,10 +3132,10 @@ func main() {
 	mux.HandleFunc("/api/admin/unban", srv.adminUnban)                                                // admin : lever un ban (libère e-mail/IP/code + débannit du Discord)
 	mux.HandleFunc("/api/admin/discord-link", srv.adminDiscordLink)                                   // bot : pousse le lien Discord↔Nextendo (source de vérité du gate)
 	// OAuth « Sign in with Nextendo » — intégration tierce sans jamais exposer le mot de passe (voir oauth.go)
-	mux.HandleFunc("/api/oauth/authorize", srv.oauthAuthorize)             // page de consentement + émission du code
-	mux.HandleFunc("/api/oauth/token", srv.oauthToken)                     // échange code → access token (serveur-à-serveur)
-	mux.HandleFunc("/api/oauth/userinfo", srv.oauthUserinfo)               // données scopées (Bearer access token)
-	mux.HandleFunc("/api/oauth/register-client", srv.oauthRegisterClient)  // admin : enregistrer une application tierce
+	mux.HandleFunc("/api/oauth/authorize", srv.oauthAuthorize)            // page de consentement + émission du code
+	mux.HandleFunc("/api/oauth/token", srv.oauthToken)                    // échange code → access token (serveur-à-serveur)
+	mux.HandleFunc("/api/oauth/userinfo", srv.oauthUserinfo)              // données scopées (Bearer access token)
+	mux.HandleFunc("/api/oauth/register-client", srv.oauthRegisterClient) // admin : enregistrer une application tierce
 	mux.HandleFunc("/api/guest", srv.guest)
 	mux.HandleFunc("/api/username-available", srv.usernameAvailable)
 	mux.HandleFunc("/api/names", srv.names)
@@ -3173,6 +3173,7 @@ func main() {
 	mux.HandleFunc("/internal/identity", internalOnly("/internal/identity", srv.internalIdentity))                  // nx-account pulls the Nextendo identity for a real CFW Switch
 	mux.HandleFunc("/internal/pid-by-bsdid", internalOnly("/internal/pid-by-bsdid", srv.internalPIDByBsDid))        // nx-account résout le bs:did d'une requête -> compte (identité par requête)
 	mux.HandleFunc("/internal/login", internalOnly("/internal/login", srv.internalLogin))                           // nx-account's account-link page validates Nextendo credentials here
+	mux.HandleFunc("/internal/baas-link", internalOnly("/internal/baas-link", srv.internalBaasLink))                // baas-jwks: a console federated this account's Nintendo Account (local open mode)
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, map[string]any{"ok": true}) })
 
 	// L'ancien site marketing servi ici a été RETIRÉ : la racine — et tout chemin non-API —

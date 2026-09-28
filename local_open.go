@@ -16,11 +16,15 @@ package main
 // registration and removes friend consent.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
+	"log"
+	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -77,6 +81,71 @@ func (s *jsonStore) EnsureBaasNSA(nsa uint64) (*Account, error) {
 		return nil, err
 	}
 	return a, nil
+}
+
+// BindBaasNSA makes baas (a console's BaaS user id, 16 hex digits) the NSA id of the account with this PID:
+// a console that links or imports that account's Nintendo Account keeps the user it registered, and
+// /api/nsa, the game servers and nnex then all resolve that user to this account. An account created
+// earlier for the same id by EnsureBaasNSA goes back to its derived id.
+func (s *jsonStore) BindBaasNSA(pid uint64, baas string) (*Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	id, ok := s.byPID[pid]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	a := s.Accts[id]
+	baas = strings.ToLower(baas)
+	for _, o := range s.Accts {
+		if o != a && strings.EqualFold(o.BaasID, baas) {
+			o.BaasID = deriveID(sessionSecret, "baas", o.PID)
+		}
+	}
+	a.BaasID = baas
+	if err := s.persist(); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// POST /internal/baas-link {"pid":N,"baas":"<16 hex>"} (local open mode, internal key): see BindBaasNSA.
+// baas-jwks calls it when a console federates a Nintendo Account.
+func (s *server) internalBaasLink(w http.ResponseWriter, r *http.Request) {
+	if !localOpen {
+		http.NotFound(w, r)
+		return
+	}
+	if k := os.Getenv("NEXTENDO_INTERNAL_KEY"); k != "" && r.Header.Get("X-Internal-Key") != k {
+		writeErr(w, http.StatusUnauthorized, "interne")
+		return
+	}
+	var in struct {
+		PID  uint64 `json:"pid"`
+		Baas string `json:"baas"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || len(in.Baas) != 16 {
+		writeErr(w, http.StatusBadRequest, "pid/baas")
+		return
+	}
+	if _, err := strconv.ParseUint(in.Baas, 16, 64); err != nil {
+		writeErr(w, http.StatusBadRequest, "baas")
+		return
+	}
+	res, ok := s.store.(interface {
+		BindBaasNSA(uint64, string) (*Account, error)
+	})
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	a, err := res.BindBaasNSA(in.PID, in.Baas)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "compte introuvable")
+		return
+	}
+	log.Printf("[local-open] pid=%d now owns BaaS user %s", a.PID, a.BaasID)
+	writeJSON(w, http.StatusOK, map[string]any{"pid": a.PID, "name": displayName(a)})
 }
 
 // EnsurePID returns the account with this PID, creating it if there is none. Local open mode
