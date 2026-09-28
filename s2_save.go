@@ -127,8 +127,8 @@ func s2GetShuffleBlocks(total int, seed uint32) []s2ShuffleBlock {
 			maxb = total - cur
 		}
 		rnd := uint64(r.u32())
-		a := (uint64((maxb-minb)&0xFFFFFFF0) + 1) * rnd
-		bs := int(((a >> 32) + uint64(minb&0xFFFFFFF0)) & 0xFFFFFFF0)
+		a := (uint64(uint32(maxb-minb)&0xFFFFFFF0) + 1) * rnd
+		bs := int(((a >> 32) + uint64(uint32(minb)&0xFFFFFFF0)) & 0xFFFFFFF0)
 		sizes = append(sizes, bs)
 		uoffs = append(uoffs, cur)
 		cur += bs
